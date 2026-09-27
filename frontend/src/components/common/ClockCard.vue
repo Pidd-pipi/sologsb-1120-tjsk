@@ -25,7 +25,10 @@ const emit = defineEmits<{
     <div class="line">钟壳：{{ item.caseMaterial }} · 尺寸 {{ item.size }} mm</div>
     <div class="line">盘面：{{ item.dialMark }}</div>
     <div class="line">存放：{{ item.storagePos }}</div>
-    <div v-if="footer" class="line footer">{{ footer }}</div>
+    <div v-if="$slots.footer" class="line footer">
+      <slot name="footer" />
+    </div>
+    <div v-else-if="footer" class="line footer">{{ footer }}</div>
   </el-card>
 </template>
 

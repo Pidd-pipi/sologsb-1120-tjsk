@@ -17,9 +17,18 @@ const props = defineProps<{
 const type = computed(() => {
   if (props.tone) return props.tone;
   if (props.state) {
-    if (props.state === 'done') return 'success';
-    if (props.state === 'rolledback') return 'danger';
-    return 'info';
+    switch (props.state) {
+      case 'released':
+        return 'success';
+      case 'qualified':
+        return 'success';
+      case 'rework':
+        return 'danger';
+      case 'submitted':
+        return 'warning';
+      default:
+        return 'info';
+    }
   }
   switch (props.grade) {
     case '一级':
@@ -36,9 +45,18 @@ const type = computed(() => {
 const text = computed(() => {
   if (props.label) return props.label;
   if (props.state) {
-    if (props.state === 'done') return '已完成';
-    if (props.state === 'rolledback') return '已回退';
-    return '待办';
+    switch (props.state) {
+      case 'released':
+        return '可放行';
+      case 'qualified':
+        return '质检合格';
+      case 'rework':
+        return '返修中';
+      case 'submitted':
+        return '完成待检';
+      default:
+        return '待完成';
+    }
   }
   return props.grade ?? '—';
 });

@@ -6,6 +6,7 @@ import { useClockStore } from '../stores/clockStore';
 import { useStepStore } from '../stores/stepStore';
 import { useClockSearch } from '../hooks/useClockSearch';
 import ClockCard from '../components/common/ClockCard.vue';
+import { isQualified } from '../types/step';
 import { CLOCK_KINDS, CONDITION_GRADES, type ClockDraft, type ClockKind, type ConditionGrade } from '../types/clock';
 
 const router = useRouter();
@@ -17,16 +18,26 @@ const REPAIR_STATES = ['未开工', '维修中', '待测试', '已完成'] as co
 
 type RepairState = (typeof REPAIR_STATES)[number];
 
-/** 由工序与走时测试推导修复状态，用于台账分栏 */
-function repairStateOf(clockId: string): RepairState {
+/** 某台钟表的工序质检统计（台账进度只统计质检合格事项） */
+function stepStatsOf(clockId: string) {
   const steps = stepStore.items.filter((s) => s.clockId === clockId);
+  return {
+    total: steps.length,
+    done: steps.filter((s) => isQualified(s.state)).length,
+    pendingReview: steps.filter((s) => s.state === 'submitted').length,
+    rework: steps.filter((s) => s.state === 'rework').length,
+  };
+}
+
+/** 由工序质检情况与走时测试推导修复状态，用于台账分栏；全部合格前不能标记已完成 */
+function repairStateOf(clockId: string): RepairState {
   const tests = stepStore.tests.filter((t) => t.clockId === clockId);
-  const done = steps.filter((s) => s.state === 'done').length;
-  if (steps.length === 0) return '未开工';
-  if (done === steps.length && tests.length > 0) return '已完成';
-  if (done === steps.length) return '待测试';
-  if (done > 0) return '维修中';
-  return '未开工';
+  const stats = stepStatsOf(clockId);
+  if (stats.total === 0) return '未开工';
+  if (stats.done < stats.total) return stats.done > 0 || stats.pendingReview > 0 || stats.rework > 0 ? '维修中' : '未开工';
+  // 所有工序均质检合格后才可进入已完成 / 待测试
+  if (tests.length > 0) return '已完成';
+  return '待测试';
 }
 
 const columns = computed(() =>
@@ -143,11 +154,33 @@ onMounted(() => {
           v-for="item in col.rows"
           :key="item.id"
           :item="item"
-          :footer="`工序 ${stepStore.items.filter((s) => s.clockId === item.id && s.state === 'done').length}/${
-            stepStore.items.filter((s) => s.clockId === item.id).length
-          } · 走时测试 ${stepStore.tests.filter((t) => t.clockId === item.id).length} 次`"
           @open="(id) => router.push(`/clocks/${id}`)"
-        />
+        >
+          <template #footer>
+            <span>质检合格 {{ stepStatsOf(item.id).done }}/{{ stepStatsOf(item.id).total }}</span>
+            <el-tag
+              v-if="stepStatsOf(item.id).rework"
+              size="small"
+              type="danger"
+              effect="dark"
+              class="footer-tag"
+            >
+              返修 {{ stepStatsOf(item.id).rework }}
+            </el-tag>
+            <el-tag
+              v-else-if="stepStatsOf(item.id).pendingReview"
+              size="small"
+              type="warning"
+              effect="dark"
+              class="footer-tag"
+            >
+              待检 {{ stepStatsOf(item.id).pendingReview }}
+            </el-tag>
+            <span class="footer-tests">
+              · 走时测试 {{ stepStore.tests.filter((t) => t.clockId === item.id).length }} 次
+            </span>
+          </template>
+        </ClockCard>
         <el-empty v-if="col.rows.length === 0" description="暂无" :image-size="60" />
       </div>
     </div>
@@ -234,5 +267,11 @@ onMounted(() => {
   align-items: center;
   gap: 8px;
   font-size: 15px;
+}
+.footer-tag {
+  margin-left: 6px;
+}
+.footer-tests {
+  font-weight: 400;
 }
 </style>

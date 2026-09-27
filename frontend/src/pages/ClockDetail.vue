@@ -20,18 +20,24 @@ const stepStore = useStepStore();
 
 const clockId = computed(() => String(route.params.id ?? ''));
 const clock = computed(() => clockStore.byId(clockId.value));
-const { progress, steps, done, total, percent, current, gaps } = useRepairProgress(clockId);
+const { progress, steps, done, total, percent, current, gaps, pendingReview, rework, allQualified } =
+  useRepairProgress(clockId);
 const parts = computed(() => partStore.byClock(clockId.value));
 const tests = computed(() => stepStore.testsByClock(clockId.value));
 const activeTab = ref('steps');
 
-async function finish(id: string) {
-  await stepStore.finish(id);
-  ElMessage.success('步骤已完成');
+async function submit(id: string) {
+  await stepStore.submitForReview(id);
+  ElMessage.success('已完成并送检，等待质检复核');
 }
-async function rollback(id: string) {
-  await stepStore.rollback(id);
-  ElMessage.warning('步骤已回退');
+async function review(payload: { id: string; reviewer: string; verdict: 'pass' | 'reject'; note: string }) {
+  await stepStore.review(payload.id, payload);
+  if (payload.verdict === 'pass') ElMessage.success('质检合格');
+  else ElMessage.warning('已退回返修，负责人可查看返修原因');
+}
+async function release(id: string) {
+  await stepStore.release(id);
+  ElMessage.success('已标记可放行');
 }
 async function move(payload: { id: string; direction: 'up' | 'down' }) {
   const list = steps.value;
@@ -73,6 +79,30 @@ onMounted(async () => {
 
     <el-alert v-if="!clock" type="warning" :closable="false" title="未找到该钟表（可能已被删除）" show-icon />
 
+    <template v-if="clock">
+      <el-alert
+        v-if="rework > 0"
+        type="error"
+        :closable="false"
+        show-icon
+        :title="`有 ${rework} 道工序被质检退回返修，请负责人查看返修原因后重新完成并送检`"
+      />
+      <el-alert
+        v-else-if="pendingReview > 0"
+        type="warning"
+        :closable="false"
+        show-icon
+        :title="`有 ${pendingReview} 道工序完成待检，进度需质检合格后方可计入`"
+      />
+      <el-alert
+        v-else-if="!allQualified"
+        type="info"
+        :closable="false"
+        show-icon
+        title="全部工序质检合格前，不能标记为已完成"
+      />
+    </template>
+
     <div v-if="clock" class="grid">
       <el-card shadow="never">
         <template #header><strong>机芯信息</strong></template>
@@ -102,21 +132,29 @@ onMounted(async () => {
           <template #header>
             <div class="card-head">
               <strong>修复进度</strong>
-              <el-tag size="small">{{ done }}/{{ total }} · {{ percent }}%</el-tag>
+              <el-tag size="small" type="success" effect="plain">质检合格 {{ done }}/{{ total }} · {{ percent }}%</el-tag>
+              <el-tag v-if="pendingReview" size="small" type="warning">完成待检 {{ pendingReview }}</el-tag>
+              <el-tag v-if="rework" size="small" type="danger">返修 {{ rework }}</el-tag>
+              <el-tag v-if="allQualified" size="small" type="success">全部合格，可放行</el-tag>
               <span v-if="current" class="muted">
                 当前卡点：#{{ current.seq }} {{ current.stepType }}（{{ current.operator }}）
               </span>
-              <span v-else class="muted">全部步骤已完成</span>
+              <span v-else class="muted">全部工序质检合格</span>
             </div>
           </template>
-          <el-progress :percentage="percent" :stroke-width="12" />
+          <el-progress
+            :percentage="percent"
+            :stroke-width="12"
+            :status="allQualified ? 'success' : undefined"
+          />
           <el-tabs v-model="activeTab" style="margin-top: 12px">
             <el-tab-pane label="工序顺序" name="steps">
               <StepSequence
                 :items="steps"
                 sortable
-                @finish="finish"
-                @rollback="rollback"
+                @submit="submit"
+                @review="review"
+                @release="release"
                 @move="move"
                 @reorder="reorder"
               />

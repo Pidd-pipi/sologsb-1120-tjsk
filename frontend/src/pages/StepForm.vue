@@ -16,7 +16,7 @@ const partStore = usePartStore();
 const stepStore = useStepStore();
 
 const clockId = ref(String(route.query.clockId ?? ''));
-const { steps, total, percent, current, gaps } = useRepairProgress(clockId);
+const { steps, total, percent, current, gaps, done, pendingReview, rework } = useRepairProgress(clockId);
 const parts = computed(() => partStore.byClock(clockId.value));
 const nextSeq = computed(() => (steps.value.length === 0 ? 1 : Math.max(...steps.value.map((s) => s.seq)) + 1));
 
@@ -33,7 +33,11 @@ const form = reactive<RepairStepDraft>({
   troubleNote: '',
   operator: '',
   startedAt: Date.now(),
+  finishedAt: undefined,
+  submittedAt: undefined,
+  releasedAt: undefined,
   state: 'pending',
+  reviews: [],
 });
 
 const error = ref('');
@@ -82,13 +86,19 @@ async function submit() {
   form.partIds = [];
 }
 
-async function finish(id: string) {
-  await stepStore.finish(id);
-  ElMessage.success('步骤已完成');
+async function submitForReview(id: string) {
+  await stepStore.submitForReview(id);
+  ElMessage.success('已完成并送检，等待质检复核');
 }
-async function rollback(id: string) {
-  await stepStore.rollback(id);
-  ElMessage.warning('步骤已回退');
+async function review(payload: { id: string; reviewer: string; verdict: 'pass' | 'reject'; note: string }) {
+  await stepStore.review(payload.id, payload);
+  ElMessage[payload.verdict === 'pass' ? 'success' : 'warning'](
+    payload.verdict === 'pass' ? '质检合格' : '已退回返修',
+  );
+}
+async function release(id: string) {
+  await stepStore.release(id);
+  ElMessage.success('已标记可放行');
 }
 
 onMounted(async () => {
@@ -183,12 +193,14 @@ onMounted(async () => {
         <template #header>
           <div class="card-head">
             <strong>该钟表现有工序</strong>
-            <el-tag size="small">{{ percent }}%</el-tag>
+            <el-tag size="small" type="success" effect="plain">质检合格 {{ done }}/{{ total }} · {{ percent }}%</el-tag>
+            <el-tag v-if="pendingReview" size="small" type="warning">待检 {{ pendingReview }}</el-tag>
+            <el-tag v-if="rework" size="small" type="danger">返修 {{ rework }}</el-tag>
             <span v-if="current" class="muted">当前卡点 #{{ current.seq }} {{ current.stepType }}</span>
-            <span v-else class="muted">全部完成</span>
+            <span v-else class="muted">全部工序质检合格</span>
           </div>
         </template>
-        <StepSequence :items="steps" @finish="finish" @rollback="rollback" />
+        <StepSequence :items="steps" @submit="submitForReview" @review="review" @release="release" />
       </el-card>
     </div>
   </div>
