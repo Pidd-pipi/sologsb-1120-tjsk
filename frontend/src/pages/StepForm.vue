@@ -34,6 +34,8 @@ const form = reactive<RepairStepDraft>({
   operator: '',
   startedAt: Date.now(),
   state: 'pending',
+  qcState: 'none',
+  qcRecords: [],
 });
 
 const error = ref('');
@@ -84,11 +86,23 @@ async function submit() {
 
 async function finish(id: string) {
   await stepStore.finish(id);
-  ElMessage.success('步骤已完成');
+  ElMessage.success('步骤已完成并送检，等待质检复核');
 }
 async function rollback(id: string) {
   await stepStore.rollback(id);
   ElMessage.warning('步骤已回退');
+}
+async function inspect(payload: { id: string; result: 'passed' | 'rejected'; reviewer: string; note: string }) {
+  await stepStore.inspect(payload.id, payload);
+  if (payload.result === 'passed') {
+    ElMessage.success('质检合格，可放行');
+  } else {
+    ElMessage.warning('已退回返修，返修原因已通知负责人');
+  }
+}
+async function release(id: string) {
+  await stepStore.release(id);
+  ElMessage.success('工序已放行');
 }
 
 onMounted(async () => {
@@ -185,10 +199,10 @@ onMounted(async () => {
             <strong>该钟表现有工序</strong>
             <el-tag size="small">{{ percent }}%</el-tag>
             <span v-if="current" class="muted">当前卡点 #{{ current.seq }} {{ current.stepType }}</span>
-            <span v-else class="muted">全部完成</span>
+            <span v-else class="muted">全部质检合格</span>
           </div>
         </template>
-        <StepSequence :items="steps" @finish="finish" @rollback="rollback" />
+        <StepSequence :items="steps" @finish="finish" @rollback="rollback" @inspect="inspect" @release="release" />
       </el-card>
     </div>
   </div>

@@ -2,10 +2,17 @@
 import type { Clock } from '../../types/clock';
 import StateBadge from './StateBadge.vue';
 
+export interface ClockAlarm {
+  text: string;
+  tone: 'warning' | 'danger';
+}
+
 defineProps<{
   item: Clock;
   /** 底部附加说明（工序进度等） */
   footer?: string;
+  /** 醒目告警（待检/返修等） */
+  alarms?: ClockAlarm[];
 }>();
 
 const emit = defineEmits<{
@@ -26,6 +33,17 @@ const emit = defineEmits<{
     <div class="line">盘面：{{ item.dialMark }}</div>
     <div class="line">存放：{{ item.storagePos }}</div>
     <div v-if="footer" class="line footer">{{ footer }}</div>
+    <div v-if="alarms && alarms.length" class="alarms">
+      <el-tag
+        v-for="a in alarms"
+        :key="a.text"
+        :type="a.tone"
+        size="small"
+        effect="dark"
+      >
+        {{ a.text }}
+      </el-tag>
+    </div>
   </el-card>
 </template>
 
@@ -49,5 +67,11 @@ const emit = defineEmits<{
   margin-top: 6px;
   color: #2f3a46;
   font-weight: 600;
+}
+.alarms {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 </style>

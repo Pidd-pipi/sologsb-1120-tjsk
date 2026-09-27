@@ -1,8 +1,15 @@
 import { defineStore } from 'pinia';
 import { db, toPlain } from '../utils/db';
 import { newId } from '../utils/id';
-import type { RepairStep, RepairStepDraft } from '../types/step';
+import type { QcRecord, RepairStep, RepairStepDraft } from '../types/step';
 import type { TimekeepingTest, TimekeepingTestDraft } from '../types/test';
+
+/** 质检复核入参 */
+export interface QcInspectInput {
+  result: 'passed' | 'rejected';
+  reviewer: string;
+  note: string;
+}
 
 interface StepState {
   items: RepairStep[];
@@ -33,13 +40,45 @@ export const useStepStore = defineStore('step', {
       this.items = [...this.items, record];
       return record;
     },
+    /** 完工并送检：进入「完成待检」；返修后重新完成同样再次送检 */
     async finish(id: string) {
-      const patch: Partial<RepairStep> = { state: 'done', finishedAt: Date.now() };
-      await db.steps.update(id, patch);
+      const patch: Partial<RepairStep> = { state: 'done', finishedAt: Date.now(), qcState: 'pending' };
+      await db.steps.update(id, toPlain(patch));
       this.items = this.items.map((it) => (it.id === id ? { ...it, ...patch } : it));
     },
+    /** 手动回退：回到待办并清空质检状态（历史质检记录保留） */
     async rollback(id: string) {
-      const patch: Partial<RepairStep> = { state: 'rolledback', finishedAt: undefined };
+      const patch: Partial<RepairStep> = { state: 'rolledback', finishedAt: undefined, qcState: 'none' };
+      await db.steps.update(id, toPlain(patch));
+      this.items = this.items.map((it) => (it.id === id ? { ...it, ...patch } : it));
+    },
+    /**
+     * 质检复核：合格 → 质检合格；退回 → 质检退回并打回返修（state 回退）。
+     * 每次复核都追加一条 QcRecord，退回备注即返修原因。
+     */
+    async inspect(id: string, input: QcInspectInput) {
+      const step = this.items.find((it) => it.id === id);
+      if (!step || step.qcState !== 'pending') return;
+      const record: QcRecord = {
+        id: newId('qc'),
+        result: input.result,
+        reviewer: input.reviewer.trim(),
+        conclusion: input.result === 'passed' ? '合格' : '退回返修',
+        note: input.note.trim(),
+        at: Date.now(),
+      };
+      const patch: Partial<RepairStep> =
+        input.result === 'passed'
+          ? { qcState: 'passed', qcRecords: [...step.qcRecords, record] }
+          : { qcState: 'rejected', state: 'rolledback', qcRecords: [...step.qcRecords, record] };
+      await db.steps.update(id, toPlain(patch));
+      this.items = this.items.map((it) => (it.id === id ? { ...it, ...patch } : it));
+    },
+    /** 放行：质检合格后标记「可放行」 */
+    async release(id: string) {
+      const step = this.items.find((it) => it.id === id);
+      if (!step || step.qcState !== 'passed') return;
+      const patch: Partial<RepairStep> = { qcState: 'released' };
       await db.steps.update(id, patch);
       this.items = this.items.map((it) => (it.id === id ? { ...it, ...patch } : it));
     },

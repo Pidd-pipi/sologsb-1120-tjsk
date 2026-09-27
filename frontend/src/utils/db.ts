@@ -6,7 +6,7 @@ import type { TimekeepingTest } from '../types/test';
 import { newId } from './id';
 
 export const DB_NAME = 'gbclockrepair';
-export const DB_VERSION = 2;
+export const DB_VERSION = 3;
 export const LS_VERSION_KEY = 'gbclockrepair:db-version';
 
 class ClockRepairDB extends Dexie {
@@ -46,6 +46,24 @@ class ClockRepairDB extends Dexie {
           .toCollection()
           .modify((row: any) => {
             if (row.positions === undefined) row.positions = [];
+          });
+      });
+    // v3：工序引入质检流转（完成待检/质检合格/可放行/质检退回），历史工序按未复核处理
+    this.version(3)
+      .stores({
+        clocks: 'id, clockNo, kind, caliber, conditionGrade, createdAt',
+        parts: 'id, clockId, name, wearState, decision, sourceLot',
+        steps: 'id, clockId, seq, stepType, state, startedAt, qcState',
+        tests: 'id, clockId, testedAt, conclusion',
+      })
+      .upgrade(async (tx) => {
+        await tx
+          .table('steps')
+          .toCollection()
+          .modify((row: any) => {
+            // 已完工的老记录转入「完成待检」等待复核；其余尚未送检。原有字段一律保留。
+            if (!row.qcState) row.qcState = row.state === 'done' ? 'pending' : 'none';
+            if (row.qcRecords === undefined) row.qcRecords = [];
           });
       });
   }
@@ -176,6 +194,17 @@ export async function ensureSeedData(): Promise<void> {
       startedAt: now - 12 * day,
       finishedAt: now - 12 * day + 80 * 60000,
       state: 'done',
+      qcState: 'passed',
+      qcRecords: [
+        {
+          id: newId('qc'),
+          result: 'passed',
+          reviewer: '沈砚秋',
+          conclusion: '合格',
+          note: '零件齐全无二次损伤，拆解顺序记录完整',
+          at: now - 11 * day,
+        },
+      ],
     },
     {
       id: newId('stp'),
@@ -193,6 +222,8 @@ export async function ensureSeedData(): Promise<void> {
       startedAt: now - 8 * day,
       finishedAt: now - 8 * day + 45 * 60000,
       state: 'done',
+      qcState: 'pending',
+      qcRecords: [],
     },
     {
       id: newId('stp'),
@@ -209,6 +240,8 @@ export async function ensureSeedData(): Promise<void> {
       operator: '祁仲言',
       startedAt: now - 3 * day,
       state: 'pending',
+      qcState: 'none',
+      qcRecords: [],
     },
   ];
 

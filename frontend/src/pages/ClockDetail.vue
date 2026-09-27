@@ -20,18 +20,31 @@ const stepStore = useStepStore();
 
 const clockId = computed(() => String(route.params.id ?? ''));
 const clock = computed(() => clockStore.byId(clockId.value));
-const { progress, steps, done, total, percent, current, gaps } = useRepairProgress(clockId);
+const { steps, passed, pendingQc, rejected, total, percent, allPassed, current, gaps } =
+  useRepairProgress(clockId);
 const parts = computed(() => partStore.byClock(clockId.value));
 const tests = computed(() => stepStore.testsByClock(clockId.value));
 const activeTab = ref('steps');
 
 async function finish(id: string) {
   await stepStore.finish(id);
-  ElMessage.success('步骤已完成');
+  ElMessage.success('步骤已完成并送检，等待质检复核');
 }
 async function rollback(id: string) {
   await stepStore.rollback(id);
   ElMessage.warning('步骤已回退');
+}
+async function inspect(payload: { id: string; result: 'passed' | 'rejected'; reviewer: string; note: string }) {
+  await stepStore.inspect(payload.id, payload);
+  if (payload.result === 'passed') {
+    ElMessage.success('质检合格，可放行');
+  } else {
+    ElMessage.warning('已退回返修，返修原因已通知负责人');
+  }
+}
+async function release(id: string) {
+  await stepStore.release(id);
+  ElMessage.success('工序已放行');
 }
 async function move(payload: { id: string; direction: 'up' | 'down' }) {
   const list = steps.value;
@@ -102,14 +115,32 @@ onMounted(async () => {
           <template #header>
             <div class="card-head">
               <strong>修复进度</strong>
-              <el-tag size="small">{{ done }}/{{ total }} · {{ percent }}%</el-tag>
+              <el-tag size="small" type="success">质检合格 {{ passed }}/{{ total }} · {{ percent }}%</el-tag>
+              <el-tag v-if="pendingQc > 0" size="small" type="warning" effect="dark">待检 {{ pendingQc }}</el-tag>
+              <el-tag v-if="rejected > 0" size="small" type="danger" effect="dark">返修 {{ rejected }}</el-tag>
               <span v-if="current" class="muted">
                 当前卡点：#{{ current.seq }} {{ current.stepType }}（{{ current.operator }}）
               </span>
-              <span v-else class="muted">全部步骤已完成</span>
+              <span v-else-if="allPassed" class="muted">全部工序质检合格</span>
             </div>
           </template>
           <el-progress :percentage="percent" :stroke-width="12" />
+          <el-alert
+            v-if="rejected > 0"
+            type="error"
+            :closable="false"
+            show-icon
+            style="margin-top: 10px"
+            :title="`有 ${rejected} 道工序被质检退回，请负责人查看返修原因，重新完成后再次送检`"
+          />
+          <el-alert
+            v-else-if="pendingQc > 0"
+            type="warning"
+            :closable="false"
+            show-icon
+            style="margin-top: 10px"
+            :title="`有 ${pendingQc} 道工序完成待检（含历史未复核），复核合格前不计入进度`"
+          />
           <el-tabs v-model="activeTab" style="margin-top: 12px">
             <el-tab-pane label="工序顺序" name="steps">
               <StepSequence
@@ -117,6 +148,8 @@ onMounted(async () => {
                 sortable
                 @finish="finish"
                 @rollback="rollback"
+                @inspect="inspect"
+                @release="release"
                 @move="move"
                 @reorder="reorder"
               />
